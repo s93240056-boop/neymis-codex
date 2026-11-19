@@ -102,6 +102,15 @@ public class MainActivity extends AppCompatActivity {
 
         store = new ChatStore(this);
         chat = store.current();
+        boolean repaired = false;
+        for (Message message : chat.messages) {
+            if (Message.ASSISTANT.equals(message.role)
+                    && (message.text == null || message.text.isEmpty())) {
+                message.text = "⚠ Ответ прерван";
+                repaired = true;
+            }
+        }
+        if (repaired) store.save();
         adapter = new ChatAdapter(chat.messages);
         recycler.setAdapter(adapter);
 
