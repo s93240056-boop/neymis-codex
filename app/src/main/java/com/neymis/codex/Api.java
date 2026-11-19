@@ -9,13 +9,19 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class Api {
 
     private static final String DEFAULT_BASE = "https://openrouter.ai/api/v1";
+
+    static final int ERR_NETWORK = -1;
+    static final int ERR_TIMEOUT = -2;
 
     interface Listener {
         void onDelta(String text);
@@ -24,12 +30,14 @@ final class Api {
 
         void onDone();
 
-        void onError(String message);
+        void onError(int code, String friendly, String detail);
     }
 
     static final class Request {
         volatile boolean cancelled;
         private volatile HttpURLConnection connection;
+        volatile int promptTokens;
+        volatile int completionTokens;
 
         void cancel() {
             cancelled = true;
@@ -109,7 +117,8 @@ final class Api {
 
                     int code = connection.getResponseCode();
                     if (code >= 400) {
-                        listener.onError(describeError(code, readAll(connection.getErrorStream())));
+                        String raw = readAll(connection.getErrorStream());
+                        listener.onError(code, friendly(code, raw), detail(code, raw));
                         return;
                     }
 
@@ -124,6 +133,11 @@ final class Api {
                         if (data.equals("[DONE]")) break;
                         try {
                             JSONObject chunk = new JSONObject(data);
+                            JSONObject usage = chunk.optJSONObject("usage");
+                            if (usage != null) {
+                                request.promptTokens = usage.optInt("prompt_tokens", request.promptTokens);
+                                request.completionTokens = usage.optInt("completion_tokens", request.completionTokens);
+                            }
                             JSONArray choices = chunk.optJSONArray("choices");
                             if (choices == null || choices.length() == 0) continue;
                             JSONObject choice = choices.optJSONObject(0);
@@ -141,7 +155,9 @@ final class Api {
                     reader.close();
                     if (!request.cancelled) listener.onDone();
                 } catch (Exception e) {
-                    if (!request.cancelled) listener.onError(friendly(e));
+                    if (!request.cancelled) {
+                        listener.onError(codeOf(e), friendly(e), e.toString());
+                    }
                 } finally {
                     if (connection != null) {
                         try {
@@ -168,7 +184,7 @@ final class Api {
             }
             int code = connection.getResponseCode();
             String raw = readAll(code >= 400 ? connection.getErrorStream() : connection.getInputStream());
-            if (code >= 400) throw new Exception(describeError(code, raw));
+            if (code >= 400) throw new Exception(friendly(code, raw));
             JSONObject root = new JSONObject(raw);
             JSONArray data = root.optJSONArray("data");
             List<Model> result = new ArrayList<>();
@@ -201,30 +217,73 @@ final class Api {
         }
     }
 
-    private static String describeError(int code, String raw) {
-        String message = "";
+    static String friendly(int code, String raw) {
+        String lower = raw == null ? "" : raw.toLowerCase(Locale.US);
+        if (code == 401 || code == 403) {
+            return "Ключ не принят. Проверь его в настройках.";
+        }
+        if (code == 402) {
+            return "Закончился баланс аккаунта. Пополни или выбери другого провайдера.";
+        }
+        if (code == 429) {
+            if (lower.contains("balance") || lower.contains("insufficient")
+                    || lower.contains("quota") || lower.contains("recharge")
+                    || lower.contains("resource")) {
+                return "Закончился баланс или лимит аккаунта. Пополни или выбери другого провайдера.";
+            }
+            return "Слишком много запросов. Подожди минуту и повтори.";
+        }
+        if (code == 404) {
+            return "Модель не найдена. Проверь название в настройках.";
+        }
+        if (code == 400 || code == 422) {
+            return "Провайдер отклонил запрос: " + shortMessage(raw);
+        }
+        if (code >= 500) {
+            return "Сервер провайдера не отвечает. Повтори через минуту.";
+        }
+        return "Ошибка " + code + ": " + shortMessage(raw);
+    }
+
+    static String detail(int code, String raw) {
+        String body = raw == null ? "" : raw.trim();
+        if (body.length() > 400) body = body.substring(0, 400) + "…";
+        return "HTTP " + code + (body.isEmpty() ? "" : "\n" + body);
+    }
+
+    private static String shortMessage(String raw) {
         try {
             JSONObject object = new JSONObject(raw);
             JSONObject error = object.optJSONObject("error");
+            String message = "";
             if (error != null) message = error.optString("message", "");
             if (message.isEmpty()) message = object.optString("message", "");
+            if (!message.isEmpty()) return message;
         } catch (Exception ignored) {
         }
-        if (message.isEmpty() && raw != null) {
-            message = raw.length() > 300 ? raw.substring(0, 300) : raw;
-        }
-        return "HTTP " + code + (message == null || message.isEmpty() ? "" : ": " + message);
+        String body = raw == null ? "" : raw.trim();
+        if (body.isEmpty()) return "без описания";
+        return body.length() > 160 ? body.substring(0, 160) + "…" : body;
     }
 
-    private static String friendly(Throwable error) {
-        if (error instanceof java.net.UnknownHostException) {
+    static int codeOf(Throwable error) {
+        if (error instanceof UnknownHostException) return ERR_NETWORK;
+        if (error instanceof SocketTimeoutException) return ERR_TIMEOUT;
+        return 0;
+    }
+
+    static String friendly(Throwable error) {
+        if (error instanceof UnknownHostException) {
             return "Нет связи с сервером. Проверь интернет.";
         }
-        if (error instanceof java.net.SocketTimeoutException) {
-            return "Сервер не ответил вовремя. Попробуй ещё раз.";
+        if (error instanceof SocketTimeoutException) {
+            return "Сервер не ответил вовремя. Повтори запрос.";
+        }
+        if (error instanceof javax.net.ssl.SSLException) {
+            return "Не удалось установить защищённое соединение. Проверь адрес API.";
         }
         String text = error.getMessage();
-        if (text == null) text = error.getClass().getSimpleName();
-        return text;
+        if (text == null || text.trim().isEmpty()) text = error.getClass().getSimpleName();
+        return "Сеть: " + text;
     }
 }

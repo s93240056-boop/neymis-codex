@@ -16,6 +16,9 @@ final class Palette {
     static int codeBg;
     static int inputBg;
     static int stroke;
+    static int meta;
+    static int error;
+    static int card;
 
     static void apply(boolean darkMode) {
         dark = darkMode;
@@ -32,6 +35,9 @@ final class Palette {
             codeBg = 0xFF0C0C16;
             inputBg = 0xFF1E1B33;
             stroke = 0xFF2A2640;
+            meta = 0xFF7E7AA0;
+            error = 0xFFFF8A80;
+            card = 0xFF231F3B;
         } else {
             bgStart = 0xFFF7F4FF;
             bgEnd = 0xFFE8F1FF;
@@ -45,6 +51,9 @@ final class Palette {
             codeBg = 0xFFEDEAF6;
             inputBg = 0xFFFFFFFF;
             stroke = 0xFFDED8F0;
+            meta = 0xFF8A86A0;
+            error = 0xFFC62828;
+            card = 0xFFF1EDFB;
         }
     }
 }

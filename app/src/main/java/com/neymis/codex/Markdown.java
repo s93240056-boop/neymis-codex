@@ -8,9 +8,70 @@ import android.text.style.RelativeSizeSpan;
 import android.text.style.StyleSpan;
 import android.text.style.TypefaceSpan;
 
+import java.util.ArrayList;
+import java.util.List;
+
 final class Markdown {
 
     private Markdown() {
+    }
+
+    static final class Block {
+        final boolean code;
+        final String language;
+        final String text;
+
+        Block(boolean code, String language, String text) {
+            this.code = code;
+            this.language = language;
+            this.text = text;
+        }
+    }
+
+    /**
+     * Режет ответ на куски: обычный текст и блоки кода.
+     * Нужно, чтобы у каждого блока кода была своя кнопка «Копировать».
+     */
+    static List<Block> blocks(String source) {
+        List<Block> result = new ArrayList<>();
+        if (source == null || source.isEmpty()) return result;
+        String[] lines = source.split("\n", -1);
+        boolean inCode = false;
+        String language = "";
+        StringBuilder buffer = new StringBuilder();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("```")) {
+                if (inCode) {
+                    result.add(new Block(true, language, trimBlank(buffer.toString())));
+                    buffer.setLength(0);
+                    inCode = false;
+                    language = "";
+                } else {
+                    String text = trimBlank(buffer.toString());
+                    if (!text.isEmpty()) result.add(new Block(false, "", text));
+                    buffer.setLength(0);
+                    inCode = true;
+                    language = trimmed.substring(3).trim();
+                }
+                continue;
+            }
+            if (buffer.length() > 0) buffer.append('\n');
+            buffer.append(line);
+        }
+        if (buffer.length() > 0) {
+            String text = trimBlank(buffer.toString());
+            if (!text.isEmpty()) result.add(new Block(inCode, language, text));
+        }
+        return result;
+    }
+
+    private static String trimBlank(String text) {
+        int start = 0;
+        int end = text.length();
+        while (start < end && Character.isWhitespace(text.charAt(start))) start++;
+        while (end > start && Character.isWhitespace(text.charAt(end - 1))) end--;
+        return text.substring(start, end);
     }
 
     static CharSequence render(String source, int codeBackground) {

@@ -1,5 +1,7 @@
 package com.neymis.codex;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -45,6 +47,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String DEFAULT_BASE = "https://openrouter.ai/api/v1";
     private static final String DEFAULT_MODEL = "openrouter/auto";
+    private static final int REQ_CHATS = 101;
 
     private static final String OLD_DEFAULT_SYSTEM =
             "Ты Ава — помощник приложения Neymis Codex. Отвечай по-русски, если пользователь пишет по-русски. "
@@ -130,15 +133,39 @@ public class MainActivity extends AppCompatActivity {
             }
         }
         if (repaired) store.save();
-        adapter = new ChatAdapter(chat.messages);
-        recycler.setAdapter(adapter);
 
-        CrashLog.trace(this, "init messages=" + chat.messages.size());
+        adapter = new ChatAdapter(chat.messages, new ChatAdapter.Listener() {
+            @Override
+            public void onMessageLongPress(int messageIndex) {
+                showMessageActions(messageIndex);
+            }
+
+            @Override
+            public void onRetry(int messageIndex) {
+                regenerate(messageIndex);
+            }
+        });
+        recycler.setAdapter(adapter);
 
         newButton.setOnClickListener(v -> newChat());
         chatsButton.setOnClickListener(v -> showChats());
         settingsButton.setOnClickListener(v -> showSettings());
         sendButton.setOnClickListener(v -> send());
+
+        input.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                saveDraft();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
 
         input.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEND) {
@@ -152,6 +179,7 @@ public class MainActivity extends AppCompatActivity {
         updateHeader();
         updateEmpty();
         updateSendButton();
+        restoreDraft();
         showLastCrash();
     }
 
@@ -160,6 +188,12 @@ public class MainActivity extends AppCompatActivity {
         if (stored != null && stored.equals(OLD_DEFAULT_SYSTEM)) {
             prefs.edit().putString("system", getString(R.string.default_system)).apply();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        saveDraft();
+        super.onPause();
     }
 
     @Override
@@ -210,18 +244,34 @@ public class MainActivity extends AppCompatActivity {
             recycler.post(this::refreshAll);
             return;
         }
-        adapter.notifyDataSetChanged();
+        adapter.refresh();
     }
 
     private void refreshLast() {
         if (adapter == null || recycler == null) return;
-        int index = adapter.getItemCount() - 1;
-        if (index < 0) return;
         if (recycler.isComputingLayout()) {
             recycler.post(this::refreshLast);
             return;
         }
-        adapter.notifyItemChanged(index);
+        adapter.notifyLastMessage();
+    }
+
+    private String draftKey() {
+        return "draft_" + (chat == null ? "none" : chat.id);
+    }
+
+    private void restoreDraft() {
+        if (chat == null) return;
+        String draft = prefs.getString(draftKey(), "");
+        input.setText(draft);
+        if (draft != null && !draft.isEmpty()) {
+            input.setSelection(draft.length());
+        }
+    }
+
+    private void saveDraft() {
+        if (prefs == null || chat == null || input == null) return;
+        prefs.edit().putString(draftKey(), input.getText().toString()).apply();
     }
 
     private void send() {
@@ -250,12 +300,12 @@ public class MainActivity extends AppCompatActivity {
         chat.messages.add(placeholder);
 
         input.setText("");
+        prefs.edit().remove(draftKey()).apply();
         refreshAll();
         updateEmpty();
         scrollToEnd();
         store.save();
 
-        CrashLog.trace(this, "send len=" + text.length() + " messages=" + chat.messages.size());
         startRequest(placeholder);
     }
 
@@ -284,18 +334,23 @@ public class MainActivity extends AppCompatActivity {
         reasonBuffer = new StringBuilder();
         streaming = true;
         pendingMessage = target;
-        request = new Api.Request();
+        target.streaming = true;
+        target.startedAt = System.currentTimeMillis();
+        target.error = "";
+        target.errorDetail = "";
+        target.tokens = 0;
+        target.elapsedMs = 0;
+
+        final Api.Request current = new Api.Request();
+        request = current;
         updateSendButton();
 
-        CrashLog.trace(this, "request base=" + base + " model=" + model + " msgs=" + payload.length());
-
         final int token = ++generation;
-        Api.chat(base, key, model, system, temperature, payload, request,
+        Api.chat(base, key, model, system, temperature, payload, current,
                 new Api.Listener() {
                     @Override
                     public void onDelta(String text) {
                         if (token != generation) return;
-                        if (streamBuffer.length() == 0) CrashLog.trace(MainActivity.this, "first delta");
                         streamBuffer.append(text);
                         ui.post(() -> {
                             if (token != generation) return;
@@ -319,15 +374,15 @@ public class MainActivity extends AppCompatActivity {
                     public void onDone() {
                         if (token != generation) return;
                         ui.post(() -> {
-                            if (token == generation) finishStreaming(target, null);
+                            if (token == generation) finishStreaming(target, null, "", current);
                         });
                     }
 
                     @Override
-                    public void onError(String message) {
+                    public void onError(int code, String friendly, String detail) {
                         if (token != generation) return;
                         ui.post(() -> {
-                            if (token == generation) finishStreaming(target, message);
+                            if (token == generation) finishStreaming(target, friendly, detail, current);
                         });
                     }
                 });
@@ -342,23 +397,25 @@ public class MainActivity extends AppCompatActivity {
         autoScroll();
     }
 
-    private void finishStreaming(Message target, String error) {
+    private void finishStreaming(Message target, String error, String detail, Api.Request used) {
         streaming = false;
         pendingMessage = null;
         request = null;
+        target.streaming = false;
         updateSendButton();
 
-        String text = streamBuffer == null ? "" : streamBuffer.toString();
-        if (error != null) {
-            target.text = text.isEmpty() ? "⚠ " + error : text + "\n\n⚠ " + error;
-        } else if (text.isEmpty()) {
-            target.text = "⚠ Пустой ответ. Проверь модель и ключ.";
-        } else {
-            target.text = text;
+        if (target.startedAt > 0) {
+            target.elapsedMs = Math.max(1, System.currentTimeMillis() - target.startedAt);
         }
-        target.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
+        if (used != null) {
+            target.tokens = used.promptTokens + used.completionTokens;
+        }
 
-        CrashLog.trace(this, "done len=" + target.text.length() + " error=" + error);
+        String text = streamBuffer == null ? "" : streamBuffer.toString();
+        target.text = text;
+        target.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
+        target.error = error == null ? "" : error;
+        target.errorDetail = detail == null ? "" : detail;
 
         chat.updated = System.currentTimeMillis();
         store.save();
@@ -376,6 +433,11 @@ public class MainActivity extends AppCompatActivity {
         streaming = false;
         if (pendingMessage != null) {
             String text = streamBuffer == null ? "" : streamBuffer.toString();
+            pendingMessage.streaming = false;
+            if (pendingMessage.startedAt > 0) {
+                pendingMessage.elapsedMs =
+                        Math.max(1, System.currentTimeMillis() - pendingMessage.startedAt);
+            }
             pendingMessage.text = text.isEmpty() ? "⏹ Остановлено" : text + "\n\n⏹ Остановлено";
             pendingMessage.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
             pendingMessage = null;
@@ -387,9 +449,8 @@ public class MainActivity extends AppCompatActivity {
 
     private void scrollToEnd() {
         recycler.post(() -> {
-            if (!chat.messages.isEmpty()) {
-                recycler.scrollToPosition(chat.messages.size() - 1);
-            }
+            int last = adapter.getItemCount() - 1;
+            if (last >= 0) recycler.scrollToPosition(last);
         });
     }
 
@@ -397,13 +458,14 @@ public class MainActivity extends AppCompatActivity {
         LinearLayoutManager manager = (LinearLayoutManager) recycler.getLayoutManager();
         if (manager == null) return;
         int last = manager.findLastVisibleItemPosition();
-        if (last >= chat.messages.size() - 2) {
-            recycler.scrollToPosition(chat.messages.size() - 1);
+        if (last >= adapter.getItemCount() - 3) {
+            recycler.scrollToPosition(adapter.getItemCount() - 1);
         }
     }
 
     private void newChat() {
         if (streaming) stopStreaming();
+        saveDraft();
         Chat fresh = new Chat(String.valueOf(System.currentTimeMillis()));
         store.chats.add(0, fresh);
         store.currentId = fresh.id;
@@ -411,52 +473,184 @@ public class MainActivity extends AppCompatActivity {
         chat = fresh;
         adapter.setMessages(chat.messages);
         updateEmpty();
+        restoreDraft();
         input.requestFocus();
     }
 
     private void showChats() {
-        final List<Chat> items = new ArrayList<>(store.chats);
-        if (items.isEmpty()) {
+        if (streaming) stopStreaming();
+        saveDraft();
+        store.save();
+        Intent intent = new Intent(this, ChatListActivity.class);
+        startActivityForResult(intent, REQ_CHATS);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_CHATS) return;
+        if (resultCode != RESULT_OK) return;
+
+        String id = data == null ? null : data.getStringExtra(ChatListActivity.EXTRA_CHAT);
+        store.reload();
+
+        if (ChatListActivity.NEW_CHAT.equals(id)) {
             newChat();
             return;
         }
-        String[] titles = new String[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            Chat item = items.get(i);
-            String mark = item.id.equals(store.currentId) ? "● " : "";
-            String title = item.title.length() > 34 ? item.title.substring(0, 34) + "…" : item.title;
-            titles[i] = mark + title;
+
+        Chat target = null;
+        if (id != null) {
+            for (Chat item : store.chats) {
+                if (item.id.equals(id)) {
+                    target = item;
+                    break;
+                }
+            }
         }
-        new AlertDialog.Builder(this)
-                .setTitle("Чаты")
-                .setItems(titles, (dialog, which) -> openChat(items.get(which)))
-                .setNeutralButton("Удалить текущий", (dialog, which) -> confirmDelete())
-                .setNegativeButton("Закрыть", null)
-                .show();
+        if (target == null) target = store.current();
+        openChat(target);
     }
 
     private void openChat(Chat target) {
         if (streaming) stopStreaming();
+        saveDraft();
         chat = target;
         store.select(target);
         adapter.setMessages(chat.messages);
         updateEmpty();
+        restoreDraft();
         scrollToEnd();
     }
 
-    private void confirmDelete() {
+    private void showMessageActions(final int index) {
+        if (index < 0 || index >= chat.messages.size()) return;
+        final Message message = chat.messages.get(index);
+        final boolean user = Message.USER.equals(message.role);
+
+        final List<String> actions = new ArrayList<>();
+        actions.add("Копировать");
+        if (message.hasError()) actions.add("Текст ошибки");
+        if (user) {
+            actions.add("Изменить и отправить");
+        } else {
+            actions.add("Повторить ответ");
+        }
+        actions.add("Удалить");
+
         new AlertDialog.Builder(this)
-                .setTitle("Удалить чат?")
-                .setMessage(chat.title)
-                .setPositiveButton("Удалить", (dialog, which) -> {
+                .setTitle(user ? "Твоё сообщение" : "Ответ Паймон")
+                .setItems(actions.toArray(new String[0]), (dialog, which) -> {
+                    String action = actions.get(which);
+                    if (action.equals("Копировать")) {
+                        copyToClipboard(message.text == null ? "" : message.text);
+                    } else if (action.equals("Текст ошибки")) {
+                        showErrorDetail(message);
+                    } else if (action.equals("Изменить и отправить")) {
+                        editMessage(index);
+                    } else if (action.equals("Повторить ответ")) {
+                        regenerate(index);
+                    } else if (action.equals("Удалить")) {
+                        deleteMessage(index);
+                    }
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
+    private void copyToClipboard(String text) {
+        try {
+            ClipboardManager manager =
+                    (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            if (manager != null) {
+                manager.setPrimaryClip(ClipData.newPlainText("Neymis Codex", text));
+                toast("Скопировано");
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void showErrorDetail(Message message) {
+        String detail = message.errorDetail == null || message.errorDetail.isEmpty()
+                ? "Подробностей нет."
+                : message.errorDetail;
+        new AlertDialog.Builder(this)
+                .setTitle("Что ответил сервер")
+                .setMessage(detail)
+                .setPositiveButton("Копировать", (dialog, which) -> copyToClipboard(detail))
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
+    private void editMessage(final int index) {
+        if (index < 0 || index >= chat.messages.size()) return;
+        final Message message = chat.messages.get(index);
+        if (!Message.USER.equals(message.role)) {
+            regenerate(index);
+            return;
+        }
+
+        final EditText field = new EditText(this);
+        field.setText(message.text);
+        field.setSelection(field.getText().length());
+        field.setTextColor(Palette.text);
+        field.setHintTextColor(Palette.textDim);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Изменить сообщение")
+                .setView(field)
+                .setPositiveButton("Отправить", (dialog, which) -> {
+                    String text = field.getText().toString().trim();
+                    if (text.isEmpty()) return;
                     if (streaming) stopStreaming();
-                    store.delete(chat);
-                    chat = store.current();
-                    adapter.setMessages(chat.messages);
+                    message.text = text;
+                    message.time = System.currentTimeMillis();
+                    while (chat.messages.size() > index + 1) {
+                        chat.messages.remove(chat.messages.size() - 1);
+                    }
+                    Message placeholder = new Message(Message.ASSISTANT, "");
+                    chat.messages.add(placeholder);
+                    chat.updated = System.currentTimeMillis();
+                    store.save();
+                    refreshAll();
                     updateEmpty();
+                    scrollToEnd();
+                    startRequest(placeholder);
                 })
                 .setNegativeButton("Отмена", null)
                 .show();
+    }
+
+    private void regenerate(int index) {
+        if (index < 0 || index >= chat.messages.size()) return;
+        Message message = chat.messages.get(index);
+        int start = Message.USER.equals(message.role) ? index + 1 : index;
+        if (start <= 0) {
+            toast("Нечего повторять");
+            return;
+        }
+        if (streaming) stopStreaming();
+        while (chat.messages.size() > start) {
+            chat.messages.remove(chat.messages.size() - 1);
+        }
+        Message placeholder = new Message(Message.ASSISTANT, "");
+        chat.messages.add(placeholder);
+        chat.updated = System.currentTimeMillis();
+        store.save();
+        refreshAll();
+        updateEmpty();
+        scrollToEnd();
+        startRequest(placeholder);
+    }
+
+    private void deleteMessage(int index) {
+        if (index < 0 || index >= chat.messages.size()) return;
+        if (streaming) stopStreaming();
+        chat.messages.remove(index);
+        chat.updated = System.currentTimeMillis();
+        store.save();
+        refreshAll();
+        updateEmpty();
     }
 
     private void showSettings() {
@@ -663,14 +857,7 @@ public class MainActivity extends AppCompatActivity {
         new AlertDialog.Builder(this)
                 .setTitle("Прошлый запуск завершился с ошибкой")
                 .setMessage(shown)
-                .setPositiveButton("Копировать", (dialog, which) -> {
-                    android.content.ClipboardManager manager =
-                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                    if (manager != null) {
-                        manager.setPrimaryClip(android.content.ClipData.newPlainText("Neymis Codex", shown));
-                        toast("Текст ошибки скопирован");
-                    }
-                })
+                .setPositiveButton("Копировать", (dialog, which) -> copyToClipboard(shown))
                 .setNeutralButton("Сбросить чаты", (dialog, which) -> {
                     new File(getFilesDir(), "chats.json").delete();
                     recreate();

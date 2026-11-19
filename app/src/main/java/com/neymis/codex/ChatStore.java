@@ -78,6 +78,12 @@ final class ChatStore {
         save();
     }
 
+    void reload() {
+        chats.clear();
+        currentId = null;
+        load();
+    }
+
     void delete(Chat chat) {
         chats.remove(chat);
         if (chat.id.equals(currentId)) currentId = null;
