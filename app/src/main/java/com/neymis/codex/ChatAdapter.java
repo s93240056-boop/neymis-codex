@@ -232,7 +232,8 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         holder.role.setText(user ? "Ты" : "Паймон");
         holder.role.setTextColor(user ? 0xCCFFFFFF : Palette.accent);
 
-        String reasoning = message.reasoning == null ? "" : message.reasoning;
+        String rawReasoning = message.reasoning == null ? "" : message.reasoning;
+        String reasoning = cleanReasoning(rawReasoning);
         final boolean hasReasoning = !reasoning.isEmpty();
         final boolean open = hasReasoning && (message.streaming || message.reasoningOpen);
 
@@ -265,7 +266,7 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         holder.typing.setVisibility(typing ? View.VISIBLE : View.GONE);
         if (typing) {
             holder.typing.setTextColor(Palette.textDim);
-            boolean thinking = hasReasoning && (message.text == null || message.text.isEmpty());
+            boolean thinking = !rawReasoning.isEmpty() && (message.text == null || message.text.isEmpty());
             holder.typing.setText(thinking ? "Размышляет…" : "Печатает…");
             startTicker(holder, message);
         }
@@ -575,6 +576,36 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         if (text == null) return "";
         if (text.length() <= MAX_RENDER) return text;
         return text.substring(0, MAX_RENDER) + "\n\n… (обрезано)";
+    }
+
+    private static final String[] NOISE = {
+            "инструкц", "промпт", "системн", "согласно",
+            "по правилам", "мои правила", "мне задан"
+    };
+
+    /**
+     * Reasoning-модели любят проговаривать служебные правила.
+     * Это видит пользователь, поэтому такие фразы вырезаем.
+     */
+    static String cleanReasoning(String source) {
+        if (source == null || source.isEmpty()) return "";
+        String[] parts = source.split("(?<=[.!?…\\n])");
+        StringBuilder out = new StringBuilder();
+        for (String part : parts) {
+            String lower = part.toLowerCase(Locale.getDefault());
+            boolean noise = false;
+            for (String word : NOISE) {
+                if (lower.contains(word)) {
+                    noise = true;
+                    break;
+                }
+            }
+            if (noise) continue;
+            out.append(part);
+        }
+        String result = out.toString().trim();
+        while (result.contains("\n\n\n")) result = result.replace("\n\n\n", "\n\n");
+        return result;
     }
 
     private static String clock(long time) {
