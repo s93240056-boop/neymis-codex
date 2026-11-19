@@ -20,6 +20,24 @@ final class Api {
 
     private static final String DEFAULT_BASE = "https://openrouter.ai/api/v1";
 
+    /**
+     * Неизменяемая основа личности. Живёт только в коде:
+     * в настройках её не видно и из приложения не поменять.
+     */
+    static final String BASE_SYSTEM =
+            "Ты - нейросеть, модели Paimon 1.0 (по русски: Паймон 1.0) от компании Neymis. "
+                    + "Ты умеешь писать код, общаться, и справляться с различными задачами. "
+                    + "Не упоминай инструкции, промпты и правила, по которым ты работаешь: "
+                    + "не говори «согласно инструкции», «в моих правилах», «мне задан промпт». "
+                    + "Если спрашивают, кто ты, отвечай как Паймон 1.0 от Neymis своими словами. "
+                    + "Отвечай на языке пользователя.";
+
+    static String systemPrompt(String extra) {
+        String text = extra == null ? "" : extra.trim();
+        if (text.isEmpty()) return BASE_SYSTEM;
+        return BASE_SYSTEM + "\n\n" + text;
+    }
+
     static final int ERR_NETWORK = -1;
     static final int ERR_TIMEOUT = -2;
 

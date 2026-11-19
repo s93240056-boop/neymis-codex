@@ -12,13 +12,16 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.text.SimpleDateFormat;
@@ -131,8 +134,9 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         }
     }
 
-    int messageCount() {
-        return messages == null ? 0 : messages.size();
+    void refresh() {
+        rebuild();
+        notifyDataSetChanged();
     }
 
     int messageAt(int position) {
@@ -147,11 +151,6 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                 return;
             }
         }
-    }
-
-    void refresh() {
-        rebuild();
-        notifyDataSetChanged();
     }
 
     void notifyLastMessage() {
@@ -234,16 +233,26 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         holder.role.setTextColor(user ? 0xCCFFFFFF : Palette.accent);
 
         String reasoning = message.reasoning == null ? "" : message.reasoning;
-        boolean hasReasoning = !reasoning.isEmpty();
+        final boolean hasReasoning = !reasoning.isEmpty();
+        final boolean open = hasReasoning && (message.streaming || message.reasoningOpen);
+
         holder.reasoningHeader.setVisibility(hasReasoning ? View.VISIBLE : View.GONE);
-        holder.reasoning.setVisibility(hasReasoning ? View.VISIBLE : View.GONE);
+        holder.reasoning.setVisibility(open ? View.VISIBLE : View.GONE);
         if (hasReasoning) {
-            holder.reasoningHeader.setText(message.streaming ? "Размышления…" : "Размышления");
+            holder.reasoningHeader.setText(
+                    (message.streaming ? "Размышления…" : "Размышления") + (open ? " ▾" : " ▸"));
             holder.reasoningHeader.setTextColor(user ? 0x99FFFFFF : Palette.meta);
             holder.reasoning.setTextColor(user ? 0xCCFFFFFF : Palette.textDim);
             holder.reasoning.setText(reasoning.length() > MAX_REASONING
                     ? reasoning.substring(0, MAX_REASONING) + "…"
                     : reasoning);
+            holder.reasoningHeader.setOnClickListener(v -> {
+                if (message.streaming) return;
+                message.reasoningOpen = !message.reasoningOpen;
+                notifyMessage(index);
+            });
+        } else {
+            holder.reasoningHeader.setOnClickListener(null);
         }
 
         holder.content.removeAllViews();
@@ -300,27 +309,23 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                 holder.streamView = view;
                 view.setText(base);
                 view.append("▍");
-                addToContent(holder, view, context);
+                addToContent(holder.content, view, context);
             } else {
-                List<Markdown.Block> blocks;
+                List<Markdown.Section> sections;
+                int headings = 0;
                 try {
-                    blocks = Markdown.blocks(cap(text));
-                } catch (Throwable error) {
-                    blocks = new ArrayList<>();
-                    blocks.add(new Markdown.Block(false, "", cap(text)));
-                }
-                for (Markdown.Block block : blocks) {
-                    if (block.code) {
-                        addToContent(holder, codeBlock(context, block.language, block.text), context);
-                    } else {
-                        TextView view = makeText(context, user);
-                        try {
-                            view.setText(Markdown.render(block.text, Palette.codeBg));
-                        } catch (Throwable error) {
-                            view.setText(block.text);
-                        }
-                        addToContent(holder, view, context);
+                    sections = Markdown.sections(cap(text));
+                    for (Markdown.Section section : sections) {
+                        if (section.level > 0) headings++;
                     }
+                } catch (Throwable error) {
+                    sections = new ArrayList<>();
+                    sections.add(new Markdown.Section(0, null, cap(text)));
+                }
+                if (headings >= 2) {
+                    renderSections(holder, sections, context, user);
+                } else {
+                    addBlocks(holder.content, cap(text), context, user);
                 }
             }
         }
@@ -331,7 +336,7 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             error.setTextSize(13);
             error.setTextColor(Palette.error);
             error.setPadding(0, dp(context, text.isEmpty() ? 0 : 8), 0, 0);
-            addToContent(holder, error, context);
+            addToContent(holder.content, error, context);
 
             TextView retry = new TextView(context);
             retry.setText("↻ Повторить");
@@ -341,15 +346,120 @@ final class ChatAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             retry.setOnClickListener(v -> {
                 if (listener != null) listener.onRetry(index);
             });
-            addToContent(holder, retry, context);
+            addToContent(holder.content, retry, context);
         }
     }
 
-    private void addToContent(MessageHolder holder, View view, Context context) {
+    private void renderSections(final MessageHolder holder, List<Markdown.Section> sections,
+                                final Context context, final boolean user) {
+        LinearLayout toc = new LinearLayout(context);
+        toc.setOrientation(LinearLayout.HORIZONTAL);
+        toc.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView tocLabel = new TextView(context);
+        tocLabel.setText("Содержание");
+        tocLabel.setTextSize(11);
+        tocLabel.setTextColor(Palette.meta);
+        tocLabel.setPadding(0, 0, dp(context, 8), 0);
+        toc.addView(tocLabel);
+
+        HorizontalScrollView scroll = new HorizontalScrollView(context);
+        scroll.setHorizontalScrollBarEnabled(false);
+        scroll.addView(toc);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        scrollParams.bottomMargin = dp(context, 6);
+        holder.content.addView(scroll, scrollParams);
+
+        for (Markdown.Section section : sections) {
+            LinearLayout box = new LinearLayout(context);
+            box.setOrientation(LinearLayout.VERTICAL);
+
+            if (section.level > 0 && section.title != null && !section.title.isEmpty()) {
+                TextView heading = new TextView(context);
+                heading.setTextSize(section.level == 1 ? 18 : (section.level == 2 ? 16 : 15));
+                heading.setTypeface(Typeface.DEFAULT_BOLD);
+                heading.setTextColor(user ? Palette.userText : Palette.accent);
+                heading.setPadding(0, dp(context, 6), 0, dp(context, 2));
+                try {
+                    heading.setText(Markdown.render(section.title, Palette.codeBg));
+                } catch (Throwable error) {
+                    heading.setText(section.title);
+                }
+                box.addView(heading);
+
+                TextView chip = new TextView(context);
+                chip.setText(section.title);
+                chip.setTextSize(12);
+                chip.setTextColor(user ? Palette.userText : Palette.accent);
+                GradientDrawable chipShape = new GradientDrawable();
+                chipShape.setColor(user ? 0x33FFFFFF : Palette.card);
+                chipShape.setCornerRadius(dp(context, 14));
+                chip.setBackground(chipShape);
+                chip.setPadding(dp(context, 10), dp(context, 5), dp(context, 10), dp(context, 5));
+                LinearLayout.LayoutParams chipParams = new LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                chipParams.rightMargin = dp(context, 6);
+                toc.addView(chip, chipParams);
+                chip.setOnClickListener(v -> jumpTo(holder, box));
+            }
+
+            if (section.body != null && !section.body.isEmpty()) {
+                addBlocks(box, section.body, context, user);
+            }
+            holder.content.addView(box);
+        }
+    }
+
+    private void addBlocks(LinearLayout target, String text, Context context, boolean user) {
+        List<Markdown.Block> blocks;
+        try {
+            blocks = Markdown.blocks(text);
+        } catch (Throwable error) {
+            blocks = new ArrayList<>();
+            blocks.add(new Markdown.Block(false, "", text));
+        }
+        for (Markdown.Block block : blocks) {
+            if (block.code) {
+                addToContent(target, codeBlock(context, block.language, block.text), context);
+            } else {
+                TextView view = makeText(context, user);
+                try {
+                    view.setText(Markdown.render(block.text, Palette.codeBg));
+                } catch (Throwable error) {
+                    view.setText(block.text);
+                }
+                addToContent(target, view, context);
+            }
+        }
+    }
+
+    private void addToContent(LinearLayout parent, View view, Context context) {
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.bottomMargin = dp(context, 6);
-        holder.content.addView(view, params);
+        parent.addView(view, params);
+    }
+
+    private void jumpTo(MessageHolder holder, View target) {
+        RecyclerView recycler = findRecycler(holder.itemView);
+        if (recycler == null) return;
+        RecyclerView.LayoutManager manager = recycler.getLayoutManager();
+        if (!(manager instanceof LinearLayoutManager)) return;
+        int position = holder.getBindingAdapterPosition();
+        if (position == RecyclerView.NO_POSITION) return;
+        int offset = -(holder.bubble.getTop() + holder.content.getTop() + target.getTop()
+                + dp(holder.itemView.getContext(), 8));
+        ((LinearLayoutManager) manager).scrollToPositionWithOffset(position, offset);
+    }
+
+    private static RecyclerView findRecycler(View view) {
+        ViewParent parent = view.getParent();
+        while (parent != null) {
+            if (parent instanceof RecyclerView) return (RecyclerView) parent;
+            parent = parent.getParent();
+        }
+        return null;
     }
 
     private TextView makeText(Context context, boolean user) {

@@ -23,6 +23,7 @@ final class Message {
     // Состояние прямо сейчас, в JSON не попадает
     boolean streaming;
     long startedAt;
+    boolean reasoningOpen;
 
     Message(String role, String text) {
         this.role = role;

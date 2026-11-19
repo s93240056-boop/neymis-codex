@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Neymis Codex</string>
-    <string name="default_system">Ты - нейросеть Паймон от компании Neymis. Отвечай сухо, коротко и по делу без лишней воды.</string>
+    <string name="default_system"></string>
 </resources>

@@ -15,7 +15,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Ключ OpenRouter"
+            android:text="Ключ провайдера"
             android:textSize="13sp"
             android:textStyle="bold" />
 
@@ -23,7 +23,7 @@
             android:id="@+id/keyField"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="sk-or-v1-…"
+            android:hint="вставь ключ API"
             android:importantForAutofill="no"
             android:inputType="textPassword"
             android:textSize="13sp" />
@@ -32,7 +32,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="Ключ хранится только на этом телефоне. Получить: openrouter.ai/keys"
+            android:text="Ключ хранится только на этом телефоне. Подойдёт DeepSeek, z.ai, OpenRouter или свой адрес."
             android:textSize="11sp" />
 
         <TextView
@@ -72,7 +72,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
-            android:text="Системный промпт"
+            android:text="Дополнительные инструкции"
             android:textSize="13sp"
             android:textStyle="bold" />
 
@@ -81,9 +81,17 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="top"
+            android:hint="Необязательно: стиль, язык, роль"
             android:inputType="textMultiLine"
             android:minLines="2"
             android:textSize="13sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Личность Паймон 1.0 задана в приложении и не меняется."
+            android:textSize="11sp" />
 
         <TextView
             android:id="@+id/tempLabel"
@@ -129,6 +137,21 @@
                 android:minWidth="0dp"
                 android:text="DeepSeek"
                 android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/presetZai"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="z.ai"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
 
             <Button
                 android:id="@+id/presetOpenRouter"

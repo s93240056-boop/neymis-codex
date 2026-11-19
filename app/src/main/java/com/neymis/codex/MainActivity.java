@@ -53,6 +53,9 @@ public class MainActivity extends AppCompatActivity {
             "Ты Ава — помощник приложения Neymis Codex. Отвечай по-русски, если пользователь пишет по-русски. "
                     + "Будь дружелюбным, но по делу: без лишних вступлений. Код оформляй в блоках ```.";
 
+    private static final String OLD_PAIMON_SYSTEM =
+            "Ты - нейросеть Паймон от компании Neymis. Отвечай сухо, коротко и по делу без лишней воды.";
+
     private SharedPreferences prefs;
     private ChatStore store;
     private Chat chat;
@@ -185,8 +188,10 @@ public class MainActivity extends AppCompatActivity {
 
     private void migratePrompt() {
         String stored = prefs.getString("system", null);
-        if (stored != null && stored.equals(OLD_DEFAULT_SYSTEM)) {
-            prefs.edit().putString("system", getString(R.string.default_system)).apply();
+        if (stored == null) return;
+        String trimmed = stored.trim();
+        if (trimmed.equals(OLD_DEFAULT_SYSTEM) || trimmed.equals(OLD_PAIMON_SYSTEM)) {
+            prefs.edit().remove("system").apply();
         }
     }
 
@@ -314,7 +319,7 @@ public class MainActivity extends AppCompatActivity {
         String key = prefs.getString("key", "").trim();
         String model = prefs.getString("model", DEFAULT_MODEL).trim();
         if (model.isEmpty()) model = DEFAULT_MODEL;
-        String system = prefs.getString("system", getString(R.string.default_system));
+        String system = Api.systemPrompt(prefs.getString("system", ""));
         double temperature = prefs.getInt("temp", 7) / 10.0;
 
         JSONArray payload = new JSONArray();
@@ -414,6 +419,7 @@ public class MainActivity extends AppCompatActivity {
         String text = streamBuffer == null ? "" : streamBuffer.toString();
         target.text = text;
         target.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
+        target.reasoningOpen = false;
         target.error = error == null ? "" : error;
         target.errorDetail = detail == null ? "" : detail;
 
@@ -666,7 +672,7 @@ public class MainActivity extends AppCompatActivity {
         settingsKey.setText(prefs.getString("key", ""));
         settingsModel.setText(prefs.getString("model", DEFAULT_MODEL));
         settingsBase.setText(prefs.getString("base", DEFAULT_BASE));
-        settingsSystem.setText(prefs.getString("system", getString(R.string.default_system)));
+        settingsSystem.setText(prefs.getString("system", ""));
         settingsTemp.setProgress(prefs.getInt("temp", 7));
         settingsTempLabel.setText(tempText(settingsTemp.getProgress()));
         settingsTheme.setChecked(!prefs.getBoolean("dark", true));
@@ -697,6 +703,13 @@ public class MainActivity extends AppCompatActivity {
             String current = settingsModel.getText().toString().trim();
             if (current.isEmpty() || current.contains("openrouter")) {
                 settingsModel.setText("deepseek-chat");
+            }
+        });
+        view.findViewById(R.id.presetZai).setOnClickListener(v -> {
+            settingsBase.setText("https://api.z.ai/api/paas/v4");
+            String current = settingsModel.getText().toString().trim();
+            if (current.isEmpty() || current.contains("openrouter") || current.contains("deepseek")) {
+                settingsModel.setText("glm-4.5-flash");
             }
         });
         view.findViewById(R.id.presetCustom).setOnClickListener(v -> {

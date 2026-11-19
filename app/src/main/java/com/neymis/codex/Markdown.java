@@ -74,6 +74,57 @@ final class Markdown {
         return text.substring(start, end);
     }
 
+    static final class Section {
+        final int level;
+        final String title;
+        final String body;
+
+        Section(int level, String title, String body) {
+            this.level = level;
+            this.title = title;
+            this.body = body;
+        }
+    }
+
+    /**
+     * Делит ответ на разделы по заголовкам #, ##, ###.
+     * Строки внутри блоков кода заголовками не считаются.
+     */
+    static List<Section> sections(String source) {
+        List<Section> result = new ArrayList<>();
+        if (source == null || source.isEmpty()) return result;
+        String[] lines = source.split("\n", -1);
+        boolean inCode = false;
+        int level = 0;
+        String title = null;
+        StringBuilder body = new StringBuilder();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("```")) {
+                inCode = !inCode;
+            }
+            int hashes = 0;
+            while (hashes < trimmed.length() && trimmed.charAt(hashes) == '#') hashes++;
+            boolean heading = !inCode && hashes >= 1 && hashes <= 3
+                    && hashes < trimmed.length() && trimmed.charAt(hashes) == ' ';
+            if (heading) {
+                if (title != null || body.length() > 0) {
+                    result.add(new Section(level, title, trimBlank(body.toString())));
+                }
+                body.setLength(0);
+                level = hashes;
+                title = trimBlank(trimmed.substring(hashes));
+                continue;
+            }
+            if (body.length() > 0) body.append('\n');
+            body.append(line);
+        }
+        if (title != null || body.length() > 0) {
+            result.add(new Section(level, title, trimBlank(body.toString())));
+        }
+        return result;
+    }
+
     static CharSequence render(String source, int codeBackground) {
         SpannableStringBuilder out = new SpannableStringBuilder();
         if (source == null || source.isEmpty()) return out;
