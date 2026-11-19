@@ -20,6 +20,8 @@ final class Api {
     interface Listener {
         void onDelta(String text);
 
+        void onReasoning(String text);
+
         void onDone();
 
         void onError(String message);
@@ -128,6 +130,9 @@ final class Api {
                             if (choice == null) continue;
                             JSONObject delta = choice.optJSONObject("delta");
                             if (delta == null) continue;
+                            String reasoning = delta.optString("reasoning_content", "");
+                            if (reasoning.isEmpty()) reasoning = delta.optString("reasoning", "");
+                            if (!reasoning.isEmpty()) listener.onReasoning(reasoning);
                             String content = delta.optString("content", "");
                             if (!content.isEmpty()) listener.onDelta(content);
                         } catch (Exception ignored) {

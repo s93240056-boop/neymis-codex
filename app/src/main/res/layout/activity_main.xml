@@ -115,7 +115,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="18dp"
                 android:gravity="center"
-                android:text="Привет, я Ава"
+                android:text="Привет, я Паймон"
                 android:textSize="20sp"
                 android:textStyle="bold" />
 
@@ -126,7 +126,7 @@
                 android:layout_marginTop="8dp"
                 android:gravity="center"
                 android:lineSpacingExtra="3dp"
-                android:text="Спроси что угодно.\nКлюч OpenRouter вставляется в настройках ⚙"
+                android:text="Спроси что угодно.\nКлюч провайдера — в настройках ⚙"
                 android:textSize="14sp" />
         </LinearLayout>
     </FrameLayout>

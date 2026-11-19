@@ -115,6 +115,40 @@
             android:inputType="textUri"
             android:textSize="13sp" />
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/presetDeepSeek"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="DeepSeek"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/presetOpenRouter"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="OpenRouter"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/presetCustom"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="Свой"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <CheckBox
             android:id="@+id/themeCheck"
             android:layout_width="wrap_content"

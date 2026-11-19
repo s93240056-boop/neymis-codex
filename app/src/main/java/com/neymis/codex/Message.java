@@ -9,6 +9,7 @@ final class Message {
 
     String role;
     String text;
+    String reasoning = "";
     long time;
 
     Message(String role, String text) {
@@ -23,6 +24,7 @@ final class Message {
             object.put("role", role);
             object.put("text", text);
             object.put("time", time);
+            if (reasoning != null && !reasoning.isEmpty()) object.put("reasoning", reasoning);
         } catch (Exception ignored) {
         }
         return object;
@@ -31,6 +33,7 @@ final class Message {
     static Message fromJson(JSONObject object) {
         Message message = new Message(object.optString("role", ASSISTANT),
                 object.optString("text", ""));
+        message.reasoning = object.optString("reasoning", "");
         message.time = object.optLong("time", System.currentTimeMillis());
         return message;
     }

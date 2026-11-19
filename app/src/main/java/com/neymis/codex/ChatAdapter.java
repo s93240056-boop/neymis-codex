@@ -15,6 +15,9 @@ import java.util.List;
 
 final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
 
+    private static final int MAX_RENDER = 24000;
+    private static final int MAX_REASONING = 1200;
+
     private List<Message> messages;
 
     ChatAdapter(List<Message> messages) {
@@ -30,6 +33,7 @@ final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
         final FrameLayout root;
         final FrameLayout bubble;
         final TextView role;
+        final TextView reasoning;
         final TextView text;
 
         Holder(View view) {
@@ -37,6 +41,7 @@ final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
             root = view.findViewById(R.id.itemRoot);
             bubble = view.findViewById(R.id.itemBubble);
             role = view.findViewById(R.id.itemRole);
+            reasoning = view.findViewById(R.id.itemReasoning);
             text = view.findViewById(R.id.itemText);
         }
     }
@@ -68,15 +73,33 @@ final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
         shape.setColor(user ? Palette.userBubble : Palette.aiBubble);
         holder.bubble.setBackground(shape);
 
-        holder.role.setText(user ? "Ты" : "Ава");
+        holder.role.setText(user ? "Ты" : "Паймон");
         holder.role.setTextColor(user ? 0xCCFFFFFF : Palette.accent);
         holder.text.setTextColor(user ? Palette.userText : Palette.aiText);
 
-        if (message.text == null || message.text.isEmpty()) {
-            holder.text.setText("…");
-            holder.text.setTextColor(Palette.textDim);
+        String reasoning = message.reasoning == null ? "" : message.reasoning;
+        if (reasoning.isEmpty()) {
+            holder.reasoning.setVisibility(View.GONE);
         } else {
-            holder.text.setText(Markdown.render(message.text, Palette.codeBg));
+            holder.reasoning.setVisibility(View.VISIBLE);
+            holder.reasoning.setTextColor(Palette.textDim);
+            holder.reasoning.setText(reasoning.length() > MAX_REASONING
+                    ? reasoning.substring(0, MAX_REASONING) + "…"
+                    : reasoning);
+        }
+
+        try {
+            if (message.text == null || message.text.isEmpty()) {
+                holder.text.setText("…");
+                holder.text.setTextColor(Palette.textDim);
+            } else {
+                String source = message.text.length() > MAX_RENDER
+                        ? message.text.substring(0, MAX_RENDER) + "\n\n… (обрезано)"
+                        : message.text;
+                holder.text.setText(Markdown.render(source, Palette.codeBg));
+            }
+        } catch (Throwable error) {
+            holder.text.setText(message.text == null ? "" : message.text);
         }
     }
 

@@ -14,10 +14,12 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -33,6 +35,8 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -41,6 +45,10 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String DEFAULT_BASE = "https://openrouter.ai/api/v1";
     private static final String DEFAULT_MODEL = "openrouter/auto";
+
+    private static final String OLD_DEFAULT_SYSTEM =
+            "Ты Ава — помощник приложения Neymis Codex. Отвечай по-русски, если пользователь пишет по-русски. "
+                    + "Будь дружелюбным, но по делу: без лишних вступлений. Код оформляй в блоках ```.";
 
     private SharedPreferences prefs;
     private ChatStore store;
@@ -72,16 +80,25 @@ public class MainActivity extends AppCompatActivity {
     private Api.Request request;
     private Message pendingMessage;
     private StringBuilder streamBuffer = new StringBuilder();
+    private StringBuilder reasonBuffer = new StringBuilder();
     private boolean streaming;
     private int generation;
     private long lastNotify;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        try {
+            init();
+        } catch (Throwable error) {
+            showFatal(error);
+        }
+    }
+
+    private void init() {
         prefs = getSharedPreferences("codex", MODE_PRIVATE);
         Palette.apply(prefs.getBoolean("dark", true));
         setTheme(Palette.dark ? R.style.AppTheme : R.style.AppTheme_Light);
-        super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
         rootView = findViewById(R.id.rootView);
@@ -99,6 +116,8 @@ public class MainActivity extends AppCompatActivity {
 
         recycler.setLayoutManager(new LinearLayoutManager(this));
         recycler.setItemAnimator(null);
+
+        migratePrompt();
 
         store = new ChatStore(this);
         chat = store.current();
@@ -131,6 +150,14 @@ public class MainActivity extends AppCompatActivity {
         updateHeader();
         updateEmpty();
         updateSendButton();
+        showLastCrash();
+    }
+
+    private void migratePrompt() {
+        String stored = prefs.getString("system", null);
+        if (stored != null && stored.equals(OLD_DEFAULT_SYSTEM)) {
+            prefs.edit().putString("system", getString(R.string.default_system)).apply();
+        }
     }
 
     @Override
@@ -175,6 +202,26 @@ public class MainActivity extends AppCompatActivity {
         emptyView.setVisibility(chat.messages.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
+    private void refreshAll() {
+        if (adapter == null || recycler == null) return;
+        if (recycler.isComputingLayout()) {
+            recycler.post(this::refreshAll);
+            return;
+        }
+        adapter.notifyDataSetChanged();
+    }
+
+    private void refreshLast() {
+        if (adapter == null || recycler == null) return;
+        int index = adapter.getItemCount() - 1;
+        if (index < 0) return;
+        if (recycler.isComputingLayout()) {
+            recycler.post(this::refreshLast);
+            return;
+        }
+        adapter.notifyItemChanged(index);
+    }
+
     private void send() {
         if (streaming) {
             stopStreaming();
@@ -185,7 +232,7 @@ public class MainActivity extends AppCompatActivity {
 
         String key = prefs.getString("key", "").trim();
         if (key.isEmpty()) {
-            toast("Вставь ключ OpenRouter в настройках ⚙");
+            toast("Вставь ключ провайдера в настройках ⚙");
             showSettings();
             return;
         }
@@ -201,7 +248,7 @@ public class MainActivity extends AppCompatActivity {
         chat.messages.add(placeholder);
 
         input.setText("");
-        adapter.notifyDataSetChanged();
+        refreshAll();
         updateEmpty();
         scrollToEnd();
         store.save();
@@ -231,6 +278,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         streamBuffer = new StringBuilder();
+        reasonBuffer = new StringBuilder();
         streaming = true;
         pendingMessage = target;
         request = new Api.Request();
@@ -246,6 +294,17 @@ public class MainActivity extends AppCompatActivity {
                         ui.post(() -> {
                             if (token != generation) return;
                             target.text = streamBuffer.toString();
+                            notifyDelta();
+                        });
+                    }
+
+                    @Override
+                    public void onReasoning(String text) {
+                        if (token != generation) return;
+                        reasonBuffer.append(text);
+                        ui.post(() -> {
+                            if (token != generation) return;
+                            target.reasoning = reasonBuffer.toString();
                             notifyDelta();
                         });
                     }
@@ -273,7 +332,7 @@ public class MainActivity extends AppCompatActivity {
         if (now - lastNotify < 70) return;
         lastNotify = now;
         if (chat.messages.isEmpty()) return;
-        adapter.notifyItemChanged(chat.messages.size() - 1);
+        refreshLast();
         autoScroll();
     }
 
@@ -291,10 +350,11 @@ public class MainActivity extends AppCompatActivity {
         } else {
             target.text = text;
         }
+        target.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
 
         chat.updated = System.currentTimeMillis();
         store.save();
-        adapter.notifyDataSetChanged();
+        refreshAll();
         updateEmpty();
         scrollToEnd();
     }
@@ -309,10 +369,11 @@ public class MainActivity extends AppCompatActivity {
         if (pendingMessage != null) {
             String text = streamBuffer == null ? "" : streamBuffer.toString();
             pendingMessage.text = text.isEmpty() ? "⏹ Остановлено" : text + "\n\n⏹ Остановлено";
+            pendingMessage.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
             pendingMessage = null;
         }
         store.save();
-        adapter.notifyDataSetChanged();
+        refreshAll();
         updateSendButton();
     }
 
@@ -423,6 +484,23 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        view.findViewById(R.id.presetOpenRouter).setOnClickListener(v -> {
+            settingsBase.setText("https://openrouter.ai/api/v1");
+            if (settingsModel.getText().toString().trim().isEmpty()) {
+                settingsModel.setText("openrouter/auto");
+            }
+        });
+        view.findViewById(R.id.presetDeepSeek).setOnClickListener(v -> {
+            settingsBase.setText("https://api.deepseek.com");
+            String current = settingsModel.getText().toString().trim();
+            if (current.isEmpty() || current.contains("openrouter")) {
+                settingsModel.setText("deepseek-chat");
+            }
+        });
+        view.findViewById(R.id.presetCustom).setOnClickListener(v -> {
+            settingsBase.requestFocus();
+            settingsBase.setSelection(settingsBase.getText().length());
+        });
         view.findViewById(R.id.modelsButton).setOnClickListener(v -> showModels());
 
         AlertDialog dialog = new AlertDialog.Builder(this)
@@ -435,13 +513,15 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
 
         dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener(v -> {
-            saveSettings();
+            boolean changed = saveSettings();
             dialog.dismiss();
+            if (changed) recreate();
         });
         dialog.getButton(DialogInterface.BUTTON_NEUTRAL).setOnClickListener(v -> {
-            saveSettings();
+            boolean changed = saveSettings();
             dialog.dismiss();
             exportChat();
+            if (changed) recycler.postDelayed(this::recreate, 600);
         });
     }
 
@@ -449,7 +529,7 @@ public class MainActivity extends AppCompatActivity {
         return "Температура: " + String.format(Locale.US, "%.1f", progress / 10.0);
     }
 
-    private void saveSettings() {
+    private boolean saveSettings() {
         boolean oldDark = prefs.getBoolean("dark", true);
         boolean newDark = !settingsTheme.isChecked();
         prefs.edit()
@@ -461,7 +541,7 @@ public class MainActivity extends AppCompatActivity {
                 .putBoolean("dark", newDark)
                 .apply();
         updateHeader();
-        if (oldDark != newDark) recreate();
+        return oldDark != newDark;
     }
 
     private void showModels() {
@@ -547,7 +627,7 @@ public class MainActivity extends AppCompatActivity {
             StringBuilder text = new StringBuilder();
             text.append("# ").append(chat.title).append("\n\n");
             for (Message message : chat.messages) {
-                text.append(Message.USER.equals(message.role) ? "**Ты:**" : "**Ава:**")
+                text.append(Message.USER.equals(message.role) ? "**Ты:**" : "**Паймон:**")
                         .append("\n\n")
                         .append(message.text)
                         .append("\n\n---\n\n");
@@ -564,6 +644,68 @@ public class MainActivity extends AppCompatActivity {
             startActivity(Intent.createChooser(intent, "Экспорт чата"));
         } catch (Exception e) {
             toast("Ошибка экспорта: " + e.getMessage());
+        }
+    }
+
+    private void showLastCrash() {
+        final String trace = CrashLog.read(this);
+        if (trace.isEmpty()) return;
+        CrashLog.clear(this);
+        final String shown = trace.length() > 3200 ? trace.substring(0, 3200) + "\n…" : trace;
+        new AlertDialog.Builder(this)
+                .setTitle("Прошлый запуск завершился с ошибкой")
+                .setMessage(shown)
+                .setPositiveButton("Копировать", (dialog, which) -> {
+                    android.content.ClipboardManager manager =
+                            (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                    if (manager != null) {
+                        manager.setPrimaryClip(android.content.ClipData.newPlainText("Neymis Codex", shown));
+                        toast("Текст ошибки скопирован");
+                    }
+                })
+                .setNeutralButton("Сбросить чаты", (dialog, which) -> {
+                    new File(getFilesDir(), "chats.json").delete();
+                    recreate();
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
+    private void showFatal(Throwable error) {
+        try {
+            StringWriter writer = new StringWriter();
+            error.printStackTrace(new PrintWriter(writer));
+
+            ScrollView scroll = new ScrollView(this);
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setPadding(dp(16), dp(24), dp(16), dp(16));
+
+            TextView title = new TextView(this);
+            title.setText("Neymis Codex не смог запуститься");
+            title.setTextSize(18);
+            title.setTextColor(Palette.text);
+            box.addView(title);
+
+            TextView trace = new TextView(this);
+            trace.setText(writer.toString());
+            trace.setTextSize(11);
+            trace.setTextColor(Palette.textDim);
+            trace.setTextIsSelectable(true);
+            box.addView(trace);
+
+            Button reset = new Button(this);
+            reset.setText("Сбросить чаты и открыть заново");
+            reset.setOnClickListener(v -> {
+                new File(getFilesDir(), "chats.json").delete();
+                recreate();
+            });
+            box.addView(reset);
+
+            scroll.addView(box);
+            setContentView(scroll);
+            rootView = box;
+        } catch (Throwable ignored) {
         }
     }
 
