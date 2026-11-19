@@ -2,6 +2,8 @@ package com.neymis.codex;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import com.neymis.core.CrashLog;
+import com.neymis.core.Palette;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -184,6 +186,15 @@ public class MainActivity extends AppCompatActivity {
         updateSendButton();
         restoreDraft();
         showLastCrash();
+
+        Intent incoming = getIntent();
+        if (incoming != null && Intent.ACTION_SEND.equals(incoming.getAction())) {
+            String shared = incoming.getStringExtra(Intent.EXTRA_TEXT);
+            if (shared != null && !shared.trim().isEmpty()) {
+                input.setText(shared.trim());
+                input.requestFocus();
+            }
+        }
     }
 
     private void migratePrompt() {
