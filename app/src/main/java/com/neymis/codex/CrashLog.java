@@ -1,11 +1,19 @@
 package com.neymis.codex;
 
+import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Environment;
+import android.provider.MediaStore;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
@@ -14,6 +22,8 @@ import java.util.Locale;
 
 final class CrashLog {
 
+    private static final Object LOCK = new Object();
+
     private CrashLog() {
     }
 
@@ -21,9 +31,20 @@ final class CrashLog {
         return new File(context.getFilesDir(), "last_crash.txt");
     }
 
+    static File traceFile(Context context) {
+        return new File(context.getFilesDir(), "debug_trace.txt");
+    }
+
     static String read(Context context) {
+        return readFile(file(context));
+    }
+
+    static String readTrace(Context context) {
+        return readFile(traceFile(context));
+    }
+
+    private static String readFile(File file) {
         try {
-            File file = file(context);
             if (!file.exists()) return "";
             FileInputStream in = new FileInputStream(file);
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -41,6 +62,20 @@ final class CrashLog {
         try {
             file(context).delete();
         } catch (Exception ignored) {
+        }
+    }
+
+    static void trace(Context context, String line) {
+        synchronized (LOCK) {
+            try {
+                File file = traceFile(context);
+                if (file.length() > 200000) file.delete();
+                FileOutputStream out = new FileOutputStream(file, true);
+                String time = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date());
+                out.write((time + "  " + line + "\n").getBytes("UTF-8"));
+                out.close();
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -62,5 +97,54 @@ final class CrashLog {
                 if (previous != null) previous.uncaughtException(thread, error);
             }
         });
+    }
+
+    static void export(Context context) {
+        try {
+            String crash = read(context);
+            String trace = readTrace(context);
+            if (crash.isEmpty() && trace.isEmpty()) return;
+            String text = "=== CRASH ===\n" + crash + "\n\n=== TRACE ===\n" + trace;
+            writeDownload(context, "codex-crash.txt", text);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void writeDownload(Context context, String name, String text) {
+        if (Build.VERSION.SDK_INT < 29) return;
+        try {
+            ContentResolver resolver = context.getContentResolver();
+            Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+            String relative = Environment.DIRECTORY_DOWNLOADS + "/NeymisCodex/";
+
+            String selection = MediaStore.MediaColumns.DISPLAY_NAME + "=? AND "
+                    + MediaStore.MediaColumns.RELATIVE_PATH + "=?";
+            Cursor cursor = resolver.query(collection,
+                    new String[]{MediaStore.MediaColumns._ID}, selection,
+                    new String[]{name, relative}, null);
+            if (cursor != null) {
+                try {
+                    if (cursor.moveToFirst()) {
+                        Uri old = Uri.withAppendedPath(collection, String.valueOf(cursor.getLong(0)));
+                        resolver.delete(old, null, null);
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, relative);
+            Uri uri = resolver.insert(collection, values);
+            if (uri == null) return;
+            OutputStream out = resolver.openOutputStream(uri);
+            if (out != null) {
+                out.write(text.getBytes("UTF-8"));
+                out.close();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 }

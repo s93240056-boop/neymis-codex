@@ -133,6 +133,8 @@ public class MainActivity extends AppCompatActivity {
         adapter = new ChatAdapter(chat.messages);
         recycler.setAdapter(adapter);
 
+        CrashLog.trace(this, "init messages=" + chat.messages.size());
+
         newButton.setOnClickListener(v -> newChat());
         chatsButton.setOnClickListener(v -> showChats());
         settingsButton.setOnClickListener(v -> showSettings());
@@ -253,6 +255,7 @@ public class MainActivity extends AppCompatActivity {
         scrollToEnd();
         store.save();
 
+        CrashLog.trace(this, "send len=" + text.length() + " messages=" + chat.messages.size());
         startRequest(placeholder);
     }
 
@@ -284,12 +287,15 @@ public class MainActivity extends AppCompatActivity {
         request = new Api.Request();
         updateSendButton();
 
+        CrashLog.trace(this, "request base=" + base + " model=" + model + " msgs=" + payload.length());
+
         final int token = ++generation;
         Api.chat(base, key, model, system, temperature, payload, request,
                 new Api.Listener() {
                     @Override
                     public void onDelta(String text) {
                         if (token != generation) return;
+                        if (streamBuffer.length() == 0) CrashLog.trace(MainActivity.this, "first delta");
                         streamBuffer.append(text);
                         ui.post(() -> {
                             if (token != generation) return;
@@ -351,6 +357,8 @@ public class MainActivity extends AppCompatActivity {
             target.text = text;
         }
         target.reasoning = reasonBuffer == null ? "" : reasonBuffer.toString();
+
+        CrashLog.trace(this, "done len=" + target.text.length() + " error=" + error);
 
         chat.updated = System.currentTimeMillis();
         store.save();

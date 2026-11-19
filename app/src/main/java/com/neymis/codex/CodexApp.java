@@ -8,5 +8,6 @@ public class CodexApp extends Application {
     public void onCreate() {
         super.onCreate();
         CrashLog.install(getApplicationContext());
+        CrashLog.export(getApplicationContext());
     }
 }
