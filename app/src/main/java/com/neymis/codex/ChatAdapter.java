@@ -31,7 +31,7 @@ final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
 
     static final class Holder extends RecyclerView.ViewHolder {
         final FrameLayout root;
-        final FrameLayout bubble;
+        final View bubble;
         final TextView role;
         final TextView reasoning;
         final TextView text;
@@ -62,11 +62,14 @@ final class ChatAdapter extends RecyclerView.Adapter<ChatAdapter.Holder> {
         int pad = dp(holder.root, 12);
         holder.root.setPadding(pad, dp(holder.root, 4), pad, dp(holder.root, 4));
 
-        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) holder.bubble.getLayoutParams();
-        params.gravity = user ? Gravity.END : Gravity.START;
-        params.leftMargin = user ? dp(holder.root, 44) : 0;
-        params.rightMargin = user ? 0 : dp(holder.root, 44);
-        holder.bubble.setLayoutParams(params);
+        ViewGroup.LayoutParams raw = holder.bubble.getLayoutParams();
+        if (raw instanceof FrameLayout.LayoutParams) {
+            FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) raw;
+            params.gravity = user ? Gravity.END : Gravity.START;
+            params.leftMargin = user ? dp(holder.root, 44) : 0;
+            params.rightMargin = user ? 0 : dp(holder.root, 44);
+            holder.bubble.setLayoutParams(params);
+        }
 
         GradientDrawable shape = new GradientDrawable();
         shape.setCornerRadius(dp(holder.root, 18));
