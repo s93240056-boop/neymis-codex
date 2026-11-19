@@ -172,6 +172,31 @@
                 android:textSize="11sp" />
         </LinearLayout>
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/exportNeymis"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="Экспорт .neymis"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/importNeymis"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:text="Импорт .neymis"
+                android:textSize="11sp" />
+        </LinearLayout>
+
         <CheckBox
             android:id="@+id/themeCheck"
             android:layout_width="wrap_content"

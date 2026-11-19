@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import com.neymis.core.CrashLog;
 import com.neymis.core.Palette;
+import com.neymis.core.NeymisPackage;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -38,6 +39,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -50,6 +53,7 @@ public class MainActivity extends AppCompatActivity {
     private static final String DEFAULT_BASE = "https://openrouter.ai/api/v1";
     private static final String DEFAULT_MODEL = "openrouter/auto";
     private static final int REQ_CHATS = 101;
+    private static final int REQ_IMPORT = 102;
 
     private static final String OLD_DEFAULT_SYSTEM =
             "Ты Ава — помощник приложения Neymis Codex. Отвечай по-русски, если пользователь пишет по-русски. "
@@ -505,6 +509,30 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_IMPORT) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                String raw = NeymisPackage.read(this, data.getData());
+                if (!NeymisPackage.valid(raw)) {
+                    toast("Это не файл .neymis");
+                    return;
+                }
+                String chats = NeymisPackage.get(raw, NeymisPackage.CODEX);
+                if (chats.isEmpty()) {
+                    toast("В пакете нет чатов Codex");
+                    return;
+                }
+                try {
+                    FileOutputStream out = new FileOutputStream(new File(getFilesDir(), "chats.json"));
+                    out.write(chats.getBytes("UTF-8"));
+                    out.close();
+                    toast("Чаты импортированы");
+                    recreate();
+                } catch (Exception e) {
+                    toast("Ошибка импорта: " + e.getMessage());
+                }
+            }
+            return;
+        }
         if (requestCode != REQ_CHATS) return;
         if (resultCode != RESULT_OK) return;
 
@@ -749,6 +777,47 @@ public class MainActivity extends AppCompatActivity {
             exportChat();
             if (changed) recycler.postDelayed(this::recreate, 600);
         });
+
+        view.findViewById(R.id.exportNeymis).setOnClickListener(v -> {
+            saveSettings();
+            exportPackage();
+        });
+        view.findViewById(R.id.importNeymis).setOnClickListener(v -> {
+            saveSettings();
+            dialog.dismiss();
+            importPackage();
+        });
+    }
+
+    private void exportPackage() {
+        try {
+            File file = new File(getFilesDir(), "chats.json");
+            String chats = file.exists() ? new String(readAll(file), "UTF-8") : "";
+            String raw = NeymisPackage.create(chats, "", "", "");
+            Uri uri = NeymisPackage.saveToDownloads(this, raw,
+                    "neymis-codex-" + System.currentTimeMillis() + ".neymis", "NeymisCodex");
+            toast(uri == null ? "Не удалось сохранить" : "Сохранено в Загрузки/NeymisCodex");
+        } catch (Exception e) {
+            toast("Ошибка экспорта: " + e.getMessage());
+        }
+    }
+
+    private void importPackage() {
+        try {
+            startActivityForResult(NeymisPackage.openPicker(), REQ_IMPORT);
+        } catch (Exception e) {
+            toast("Не удалось открыть файл");
+        }
+    }
+
+    private static byte[] readAll(File file) throws Exception {
+        FileInputStream in = new FileInputStream(file);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = in.read(buffer)) > 0) out.write(buffer, 0, count);
+        in.close();
+        return out.toByteArray();
     }
 
     private String tempText(int progress) {
